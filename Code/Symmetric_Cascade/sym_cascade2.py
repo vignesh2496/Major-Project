@@ -8,6 +8,7 @@ Created on Tue Jul  4 17:30:03 2017
 
 import numpy as np
 import matplotlib.pyplot as plt
+from sklearn.model_selection import StratifiedKFold
 
 # Limits
 MINP = 1e-11
@@ -125,6 +126,20 @@ class Cascade:
             for i in range(n_stages):
                 if weight.stage_hash[i]:
                     self.stages[i].weights.append(weight.val)
+                    
+    def reset_all_weights(self):
+        n_weights = len(self.weights)  
+        # Reset cascade weights
+        for i in range(n_weights):
+            self.weights[i].val = 0.01 
+        # Reset stage weights
+        self.update_stage_weights()  
+        
+    def reset_all_thresholds(self):
+        n_stages = len(self.stages)
+        for i in range(n_stages):
+            self.stages[i].threshold = 0
+        self.thresholds.clear()
     
     def __init__(self, stages, n_features, share_weights):
         self.stages = stages
@@ -190,32 +205,11 @@ class Cascade:
                 else:
                     count_wrong.append(stage_no + 1)
             return 100 * acc / n_examples, acquisition_cost / (n_examples * total_stages_cost), count_correct, count_wrong
-        
-    def precompute_subsets(self, X):
-        subset = []
-        for x in X:
-            temp1 = []
-            for stage in self.stages:
-                temp2 = [1]
-                for feature in stage.features:
-                        temp2.append(x[feature.f_id])
-                temp1.append(temp2)
-            subset.append(temp1)
-        return subset
     
-    def train(self, X, Y, low_ALPHA, high_ALPHA, step_ALPHA, BETA, ETA, EPSILON, ITERATIONS, DEC_PERIOD, DEC_FACTOR, low_THRESH, high_THRESH, step_THRESH, PERCENT_CROSS, visualize, stats):        
-        n_examples = len(X)
+    def train(self, X, Y, low_ALPHA, high_ALPHA, step_ALPHA, BETA, ETA, EPSILON, ITERATIONS, DEC_PERIOD, DEC_FACTOR, low_THRESH, high_THRESH, step_THRESH, visualize, stats):        
         n_stages = len(self.stages)
-        n_weights = len(self.weights)
-        n_cross = int(n_examples * PERCENT_CROSS / 100)
-        n_train = n_examples - n_cross
-        X_train = X[:n_train,:]
-        Y_train = Y[:n_train]
-        X_cross = X[n_train:,:]
-        Y_cross = Y[n_train:]    
-        # Precompute train and cross-validate subsets
-        subset_train = self.precompute_subsets(X_train)
-        subset_cross = self.precompute_subsets(X_cross)    
+        n_weights = len(self.weights)   
+
         #======================================================#
         # ALPHA : l1-norm coefficient                          #
         # low_ALPHA : lower limit of ALPHA for tuning          #
@@ -231,6 +225,18 @@ class Cascade:
         # high_THRESH : upper limit for threshold selection    #
         # step_THRESH : step size for threshold selection      #
         #======================================================#    
+        
+        def precompute_subsets(X):
+            subset = []
+            for x in X:
+                temp1 = []
+                for stage in self.stages:
+                    temp2 = [1]
+                    for feature in stage.features:
+                        temp2.append(x[feature.f_id])
+                    temp1.append(temp2)
+                subset.append(temp1)
+            return np.array(subset)
         
         def compute_positive_prob(subset):
             prob = []
@@ -249,15 +255,17 @@ class Cascade:
                     else:
                         pass_prob = self.stages[j].pass_probability(subset[i][j])
                         prob[i] = min(max(prob[i] + prod * (1 - pass_prob) * pos_prob, MINP), MAXP)
-            return prob
+            return np.array(prob)
             
         # TRAIN SUB-ROUTINE STARTS HERE
         # =============================        
-        def train_helper(ALPHA, ETA):
+        def train_helper(X_train, Y_train, ALPHA, ETA):
             convergence = False            
             cycles = []
             train_error = []
-            iterations = 0            
+            iterations = 0     
+            subset_train = precompute_subsets(X_train)
+            n_train = subset_train.shape[0]
             # Newton's Algorithm begins
             while not convergence and iterations <= ITERATIONS:        
                 # Adaptive learning rate
@@ -365,8 +373,7 @@ class Cascade:
                 # Get list of weight values
                 weights_val = []
                 for weight in self.weights:
-                    weights_val.append(weight.val)
-                    
+                    weights_val.append(weight.val)    
                 dnorm_dw = np.sign(weights_val)
                 dJ_dw = -1 * dl_dw + ALPHA * dnorm_dw + BETA * dT_dw                
                 M5 = np.dot(d2p_dw2, M4) 
@@ -375,9 +382,9 @@ class Cascade:
                 d2l_dw2 = M5 - M7
                 d2J_dw2 = -1 * d2l_dw2 + BETA * d2T_dw2                
                 # Newton-Raphson update 
-                dw = np.divide(-1 * dJ_dw, d2J_dw2)
+                # dw = -1 * dJ_dw / d2J_dw2
                 # Gradient Descent update 
-                # dw = -dJ_dw                
+                dw = -dJ_dw                
                 for i in range(n_weights):
                     dw[i] = min(max(dw[i], -self.weights[i].trust_region), self.weights[i].trust_region)
                     self.weights[i].trust_region = max(2 * abs(dw[i]), self.weights[i].trust_region / 2)
@@ -388,8 +395,8 @@ class Cascade:
                 self.update_stage_weights()                     
                 # Compute new +ve probability for each example
                 p_new = compute_positive_prob(subset_train)                                
-                # Compute training-error and accuracy
-                acc = 0
+                # Compute training-loss and soft training accuracy
+                soft_acc = 0
                 sum_abs_diff = 0
                 log_likelihood = 0
                 for i in range(n_train):
@@ -400,9 +407,9 @@ class Cascade:
                     else:
                         category = 0
                     if category == Y_train[i]:
-                        acc += 1
-                acc /= n_train
-                acc *= 100                
+                        soft_acc += 1
+                soft_acc /= n_train
+                soft_acc *= 100                
                 # Convergence criterion
                 convergence = sum_abs_diff/sum_p <= EPSILON                
                 # Compute training error (without the regularization term)
@@ -414,11 +421,11 @@ class Cascade:
                     plt.plot(cycles, train_error, 'ro')
                     plt.axis([0, 100, 0, 1000])
                     plt.xlabel("Cycle number")
-                    plt.ylabel("Training error")
+                    plt.ylabel("Training loss")
                     plt.show()                
                 if stats:
                     # Print Statistics
-                    print("%d. Training error : %f | Accuracy : %.2f %%" % (iterations, J_train, acc))           
+                    print("Epoch %d: Training loss : %f | Soft Training Accuracy : %.2f %%" % (iterations, J_train, soft_acc))           
                     print("-----------------------------------------------------------")                                    
             # Newton's Algorithm ends
         # TRAIN SUB-ROUTINE ENDS HERE
@@ -428,70 +435,59 @@ class Cascade:
         # THRESHOLD HELPER BEGINS HERE
         #=====================================================================================================
         # Searches for suitable thresholds through a grid search
-        def threshold_helper(cur, best_acc, best_cost):
+        def threshold_helper(X_cross, Y_cross, cur, metric):
             # Base case
             if cur == n_stages - 1:
                 acc, cost, count_c, count_w = self.compute_accuracy(X_cross, Y_cross, False)
-                if (1 - acc / 100) + BETA * cost < (1 - best_acc / 100) + BETA * best_cost:
-                    # Update best accuracy
-                    best_acc = acc
-                    # Update best cost
-                    best_cost = cost
+                if (1 - acc / 100) < metric:
+                    # Update metric
+                    metric = (1 - acc / 100) 
                     self.thresholds.clear()
                     for i in range(n_stages):
                         self.thresholds.append(self.stages[i].threshold) 
-                return best_acc, best_cost
+                return metric
             # Recursion 
             i = low_THRESH
             while(i < high_THRESH):
                 self.stages[cur].threshold = i
-                best_acc, best_cost = threshold_helper(cur + 1, best_acc, best_cost)
+                metric = threshold_helper(X_cross, Y_cross, cur + 1, metric)
                 i += step_THRESH
-            return best_acc, best_cost
+            return metric
         #=====================================================================================================
         # THRESHOLD HELPER ENDS HERE
         #=====================================================================================================
         
         # Search for suitable value of ALPHA
-        min_error = 1e100
-        # Stores final weights i.e. arg-min
-        best_weights = []        
+        min_metric = np.inf       
         ALPHA = low_ALPHA
+        BEST_ALPHA = 0
         while(ALPHA < high_ALPHA):
-            train_helper(ALPHA, ETA)
-            p = compute_positive_prob(subset_cross)
-            M1 = np.dot(Y_cross, np.log(p))
-            M2 = np.dot(np.ones(n_cross) - Y_cross, np.log(np.ones(n_cross) - p))
-            log_likelihood = M1 + M2            
-            J_cross = -log_likelihood 
-            if J_cross < min_error:
-                # Update minimum error
-                min_error = J_cross
-                # Update arg-min
-                best_weights.clear()
-                for i in range(n_weights):
-                    best_weights.append(self.weights[i].val)                    
-            # Reset weights for the next call to train_helper 
-            for i in range(n_weights):
-                self.weights[i].val = 0.01 
-            # Reset stage weights
-            self.update_stage_weights()            
-            # Display cross-validation error
-            print("ALPHA = %.2f | Cross-validation loss : %f" % (ALPHA, J_cross))
+            seed = 11
+            kfold = StratifiedKFold(n_splits = 3, shuffle = True, random_state = seed)
+            cv_metric = []
+            for train, cross in kfold.split(X, Y):
+                X_train = X[train]
+                X_cross = X[cross]
+                Y_train = Y[train]
+                Y_cross = Y[cross]
+                train_helper(X_train, Y_train, ALPHA, ETA)
+                metric = threshold_helper(X_cross, Y_cross, 0, np.inf)
+                self.reset_all_weights()
+                self.reset_all_thresholds()
+                cv_metric.append(metric)
+            if  np.mean(cv_metric) < min_metric:
+                # Update minimum metric
+                min_metric = np.mean(cv_metric)
+                # Update best ALPHA
+                BEST_ALPHA = ALPHA        
+            # Display cross-validation metric
+            print("ALPHA = %.2f | Cross-validation metric : %f +- %f" % (ALPHA, min_metric, np.std(cv_metric)))
             print("===========================================================\n")            
             # Update ALPHA
-            ALPHA *= step_ALPHA        
-        # Set weights to corresponding arg-min 
-        for i in range(n_weights):
-            self.weights[i].val = best_weights[i]
-        # Update stage weights to corresponding arg-min
-        self.update_stage_weights()                       
-        # Search for suitable set of thresholds
-        cross_acc, cross_cost = threshold_helper(0, 0, 1)        
-        # Display cross-validation accuracy
-        print("Cross-validation final accuracy : %.2f %%" % cross_acc)
-        print("Cross-validation final normalized-cost : %.2f" % cross_cost)        
-        # Set thresholds to corresponding arg-max 
+            ALPHA *= step_ALPHA            
+        train_helper(X, Y, BEST_ALPHA, ETA)
+        threshold_helper(X, Y, 0, np.inf)             
+        # Set thresholds to corresponding arg-min
         for i in range(n_stages):
             self.stages[i].threshold = self.thresholds[i]  
     

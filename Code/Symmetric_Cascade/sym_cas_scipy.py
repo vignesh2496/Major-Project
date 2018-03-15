@@ -343,26 +343,26 @@ class Cascade:
         # THRESHOLD HELPER BEGINS HERE
         #=====================================================================================================
         # Searches for suitable thresholds through a grid search
-        def threshold_helper(cur, max_acc, arg_max_cost):
+        def threshold_helper(cur, best_acc, best_cost):
             # Base case
             if cur == n_stages - 1:
                 acc, cost, count_c, count_w = self.compute_accuracy(X_cross, Y_cross, False)
-                if acc > max_acc:
+                if 1 - acc / 100 + BETA * cost < 1 - best_acc / 100 + BETA * best_cost:
                     # Update maximum accuracy
-                    max_acc = acc
+                    best_acc = acc
                     # Update arg-max
-                    arg_max_cost = cost
+                    best_cost = cost
                     self.thresholds.clear()
                     for i in range(n_stages):
                         self.thresholds.append(self.stages[i].threshold) 
-                return max_acc, arg_max_cost
+                return best_acc, best_cost
             # Recursion 
             i = low_THRESH
             while(i < high_THRESH):
                 self.stages[cur].threshold = i
-                max_acc, arg_max_cost = threshold_helper(cur + 1, max_acc, arg_max_cost)
+                best_acc, best_cost = threshold_helper(cur + 1, best_acc, best_cost)
                 i += step_THRESH
-            return max_acc, arg_max_cost
+            return best_acc, best_cost
         #=====================================================================================================
         # THRESHOLD HELPER ENDS HERE
         #=====================================================================================================

@@ -17,23 +17,23 @@ from random import shuffle
 # Limits
 MAXEXP = 700
 MINEXP = -MAXEXP
-
 '''
 # Read data
-df = pd.read_csv('Dataset/dataset4.csv')
+df = pd.read_csv('/home/vignesh/Desktop/Major-Project/Dataset/dataset6.csv')
 df = np.array(df)
 # Shuffle examples
-shuffle(df)
+#shuffle(df)
 '''
 
-df = np.load('Dataset/dataframe1.npy')
+df = np.load('/home/vignesh/Desktop/Major-Project/Dataset/dataframe1.npy')
+
 
 # Make train and test sets
 X_train = df[0:800, 1:11]
 Y_train = df[0:800, 11] 
 X_test = df[800:, 1:11]
 Y_test = df[800:, 11]
-
+print(np.size(np.where(Y_test==1)))
 # Create costs
 cost = np.zeros(10)
 for i in range(9):
@@ -101,7 +101,7 @@ for beta in beta_list:
     
     # Relax into soft cascade and train
     # Train + Cross-validation size : 800 
-    c1.train(X_train, Y_train, 0.1, 7, 2, beta, 0.1, 5e-3, 50, 1, 1, 0.1, 1.0, 0.1, 25, False, False)
+    c1.train(X_train, Y_train, low_ALPHA = 0.1, high_ALPHA = 0.2, step_ALPHA = 2, BETA = beta, ETA = 0.1, EPSILON = 5e-3, ITERATIONS = 50, DEC_PERIOD = 50, DEC_FACTOR = 1, low_THRESH = 0.1, high_THRESH = 1.0, step_THRESH = 0.1, PERCENT_CROSS = 25, visualize = False, stats = False)
     # Testing
     # Test size : 200 
     acc, cost, count_c, count_w = c1.test(X_test, Y_test)

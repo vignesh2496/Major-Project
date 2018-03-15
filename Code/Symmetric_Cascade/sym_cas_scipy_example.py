@@ -26,7 +26,7 @@ df = np.array(df)
 shuffle(df)
 '''
 
-df = np.load('Dataset/dataframe1.npy')
+df = np.load('/home/vignesh/Desktop/Major-Project/Dataset/dataframe1.npy')
 
 # Make train and test sets
 X_train = df[0:800, 1:11]
@@ -101,7 +101,7 @@ for beta in beta_list:
     
     # Relax into soft cascade and train
     # Train + Cross-validation size : 800 
-    c1.train(X_train, Y_train, 0.1, 7, 2, beta, 0.1, 1.0, 0.1, 25, False, False)
+    c1.train(X_train, Y_train, 0.1, 0.2, 2, beta, 0.1, 1.0, 0.1, 25, False, False)
     # Testing
     # Test size : 200 
     acc, cost, count_c, count_w = c1.test(X_test, Y_test)
