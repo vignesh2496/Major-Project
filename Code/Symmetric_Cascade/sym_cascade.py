@@ -35,7 +35,7 @@ class Weight:
        
 class Stage:    
     def __init__(self, features, f_soft_pass, f_soft_pass_1der, f_soft_pass_2der, s_name):
-        self.features =  features
+        self.features = features
         # Sort in increasing order of id for binary search while populating cascade weights
         self.features.sort(key = lambda x: x.f_id)
         # Pass function
@@ -201,21 +201,21 @@ class Cascade:
                         temp2.append(x[feature.f_id])
                 temp1.append(temp2)
             subset.append(temp1)
-        return subset
+        return np.array(subset)
     
-    def train(self, X, Y, low_ALPHA, high_ALPHA, step_ALPHA, BETA, ETA, EPSILON, ITERATIONS, DEC_PERIOD, DEC_FACTOR, low_THRESH, high_THRESH, step_THRESH, PERCENT_CROSS, visualize, stats):        
+    def train(self, X, Y, low_ALPHA, high_ALPHA, step_ALPHA, BETA, ETA, EPSILON, ITERATIONS, DEC_PERIOD, DEC_FACTOR, low_THRESH, high_THRESH, step_THRESH, PERCENT_VAL, visualize, stats):        
         n_examples = len(X)
         n_stages = len(self.stages)
         n_weights = len(self.weights)
-        n_cross = int(n_examples * PERCENT_CROSS / 100)
+        n_cross = int(n_examples * PERCENT_VAL / 100)
         n_train = n_examples - n_cross
         X_train = X[:n_train,:]
         Y_train = Y[:n_train]
-        X_cross = X[n_train:,:]
-        Y_cross = Y[n_train:]    
-        # Precompute train and cross-validate subsets
+        X_hold_out = X[n_train:,:]
+        Y_hold_out = Y[n_train:]    
+        # Precompute train and validation subsets
         subset_train = self.precompute_subsets(X_train)
-        subset_cross = self.precompute_subsets(X_cross)    
+        subset_hold_out = self.precompute_subsets(X_hold_out)    
         #======================================================#
         # ALPHA : l1-norm coefficient                          #
         # low_ALPHA : lower limit of ALPHA for tuning          #
@@ -249,7 +249,7 @@ class Cascade:
                     else:
                         pass_prob = self.stages[j].pass_probability(subset[i][j])
                         prob[i] = min(max(prob[i] + prod * (1 - pass_prob) * pos_prob, MINP), MAXP)
-            return prob
+            return np.array(prob)
             
         # TRAIN SUB-ROUTINE STARTS HERE
         # =============================        
@@ -259,7 +259,7 @@ class Cascade:
             train_error = []
             iterations = 0            
             # Newton's Algorithm begins
-            while not convergence and iterations <= ITERATIONS:        
+            while not convergence and iterations < ITERATIONS:        
                 # Adaptive learning rate
                 if iterations % DEC_PERIOD == 0 and iterations != 0:
                     ETA /= DEC_FACTOR                
@@ -358,8 +358,8 @@ class Cascade:
                 d2p_dw2 = np.array(d2p_dw2) 
                 d2T_dw2 = np.array(d2T_dw2)                
                 M1 = Y_train / p 
-                M2 = np.ones(n_train) - Y_train
-                M3 = np.ones(n_train) - p 
+                M2 = 1 - Y_train
+                M3 = 1 - p 
                 M4 = M1 - M2 / M3      
                 dl_dw = np.dot(dp_dw, M4)                
                 # Get list of weight values
@@ -368,14 +368,14 @@ class Cascade:
                     weights_val.append(weight.val)
                     
                 dnorm_dw = np.sign(weights_val)
-                dJ_dw = -1 * dl_dw + ALPHA * dnorm_dw + BETA * dT_dw                
+                dJ_dw = -1 * dl_dw + ALPHA * dnorm_dw + 10 * BETA * dT_dw     
                 M5 = np.dot(d2p_dw2, M4) 
                 M6 = Y_train / p ** 2 + M2 / M3 ** 2
                 M7 = np.dot(dp_dw ** 2, M6)
                 d2l_dw2 = M5 - M7
-                d2J_dw2 = -1 * d2l_dw2 + BETA * d2T_dw2                
+                d2J_dw2 = -1 * d2l_dw2 + 10 * BETA * d2T_dw2                
                 # Newton-Raphson update 
-                dw = np.divide(-1 * dJ_dw, d2J_dw2)
+                dw = -1 * dJ_dw / d2J_dw2
                 # Gradient Descent update 
                 # dw = -dJ_dw                
                 for i in range(n_weights):
@@ -418,7 +418,7 @@ class Cascade:
                     plt.show()                
                 if stats:
                     # Print Statistics
-                    print("%d. Training error : %f | Accuracy : %.2f %%" % (iterations, J_train, acc))           
+                    print("Epoch %d. Training loss : %f | Accuracy : %.2f %%" % (iterations, J_train, acc))           
                     print("-----------------------------------------------------------")                                    
             # Newton's Algorithm ends
         # TRAIN SUB-ROUTINE ENDS HERE
@@ -428,11 +428,12 @@ class Cascade:
         # THRESHOLD HELPER BEGINS HERE
         #=====================================================================================================
         # Searches for suitable thresholds through a grid search
+
         def threshold_helper(cur, best_acc, best_cost):
             # Base case
             if cur == n_stages - 1:
-                acc, cost, count_c, count_w = self.compute_accuracy(X_cross, Y_cross, False)
-                if (1 - acc / 100) + BETA * cost < (1 - best_acc / 100) + BETA * best_cost:
+                acc, cost, count_c, count_w = self.compute_accuracy(X_hold_out, Y_hold_out, False)
+                if (1 - acc / 100) + BETA * cost <= (1 - best_acc / 100) + BETA * best_cost:
                     # Update best accuracy
                     best_acc = acc
                     # Update best cost
@@ -453,20 +454,21 @@ class Cascade:
         #=====================================================================================================
         
         # Search for suitable value of ALPHA
+        print("changed")
         min_error = 1e100
         # Stores final weights i.e. arg-min
         best_weights = []        
         ALPHA = low_ALPHA
         while(ALPHA < high_ALPHA):
             train_helper(ALPHA, ETA)
-            p = compute_positive_prob(subset_cross)
-            M1 = np.dot(Y_cross, np.log(p))
-            M2 = np.dot(np.ones(n_cross) - Y_cross, np.log(np.ones(n_cross) - p))
+            p = compute_positive_prob(subset_hold_out)
+            M1 = np.dot(Y_hold_out, np.log(p))
+            M2 = np.dot(1 - Y_hold_out, np.log(1 - p))
             log_likelihood = M1 + M2            
-            J_cross = -log_likelihood 
-            if J_cross < min_error:
+            J_hold_out = -log_likelihood 
+            if J_hold_out < min_error:
                 # Update minimum error
-                min_error = J_cross
+                min_error = J_hold_out
                 # Update arg-min
                 best_weights.clear()
                 for i in range(n_weights):
@@ -476,8 +478,8 @@ class Cascade:
                 self.weights[i].val = 0.01 
             # Reset stage weights
             self.update_stage_weights()            
-            # Display cross-validation error
-            print("ALPHA = %.2f | Cross-validation loss : %f" % (ALPHA, J_cross))
+            # Display validation error
+            print("\nALPHA = %.2f | Validation loss : %f" % (ALPHA, J_hold_out))
             print("===========================================================\n")            
             # Update ALPHA
             ALPHA *= step_ALPHA        
@@ -487,10 +489,10 @@ class Cascade:
         # Update stage weights to corresponding arg-min
         self.update_stage_weights()                       
         # Search for suitable set of thresholds
-        cross_acc, cross_cost = threshold_helper(0, 0, 1)        
+        hold_out_acc, hold_out_cost = threshold_helper(0, 0, 1)        
         # Display cross-validation accuracy
-        print("Cross-validation final accuracy : %.2f %%" % cross_acc)
-        print("Cross-validation final normalized-cost : %.2f" % cross_cost)        
+        print("Validation final accuracy : %.2f %%" % hold_out_acc)
+        print("Validation final normalized-cost : %.2f" % hold_out_cost)        
         # Set thresholds to corresponding arg-max 
         for i in range(n_stages):
             self.stages[i].threshold = self.thresholds[i]  
@@ -498,3 +500,4 @@ class Cascade:
     def test(self, X, Y):
         acc, cost, count_c, count_w = self.compute_accuracy(X, Y, False)
         return acc, cost, count_c, count_w
+    

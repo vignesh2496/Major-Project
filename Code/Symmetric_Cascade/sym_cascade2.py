@@ -267,7 +267,7 @@ class Cascade:
             subset_train = precompute_subsets(X_train)
             n_train = subset_train.shape[0]
             # Newton's Algorithm begins
-            while not convergence and iterations <= ITERATIONS:        
+            while not convergence and iterations < ITERATIONS:        
                 # Adaptive learning rate
                 if iterations % DEC_PERIOD == 0 and iterations != 0:
                     ETA /= DEC_FACTOR                
